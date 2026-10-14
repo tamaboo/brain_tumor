@@ -1,0 +1,10 @@
+   # Rahasia: JANGAN di-upload ke GitHub
+   .streamlit/secrets.toml
+
+   # Lingkungan & cache Python
+   venv/
+   __pycache__/
+   *.pyc
+
+   # Pengaturan editor
+   .vscode/

@@ -1,0 +1,23 @@
+# NeuroSight - Brain Tumor Diagnostics (Streamlit)
+# Install:  py -3.11 -m pip install -r requirements.txt
+# Python 3.11 recommended (TensorFlow does not support very new Python versions)
+
+# --- Web app ---
+# >=1.50 needed for: st.dialog, st.context.cookies, st.container(key=...), width="stretch"
+streamlit>=1.50.0
+
+# --- Database (Supabase) ---
+supabase>=2.0.0
+
+# --- AI chatbot (Groq) ---
+groq
+
+# --- Brain tumor model (EfficientNetB2, saved with Keras 3.13.2) ---
+tensorflow>=2.16.1
+keras>=3.13.2
+
+# --- Image processing / data ---
+numpy
+pandas
+pillow
+opencv-python-headless
