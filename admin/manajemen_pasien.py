@@ -1,8 +1,9 @@
+import os
 import streamlit as st
 from supabase import create_client, Client
 from datetime import date
 import tensorflow as tf
-from tensorflow.keras.models import load_model, Model
+from keras.models import load_model, Model
 import numpy as np
 import cv2
 from PIL import Image
@@ -12,6 +13,8 @@ from navbar.kamus_bahasa import t
 # ==============================================================================
 # 1. KONFIGURASI SUPABASE & MODEL AI
 # ==============================================================================
+BASE_DIR = os.getcwd()
+
 @st.cache_resource
 def get_supabase_client() -> Client:
     url = st.secrets["SUPABASE_URL"]
@@ -25,7 +28,8 @@ IMG_SIZE = (260, 260)
 
 @st.cache_resource
 def load_tumor_model():
-    return load_model(r"E:\Skripsi_Web_Tumor\brain_tumor_efficientnetb2.keras")
+    model_path = os.path.join(BASE_DIR, "brain_tumor_efficientnetb2.keras")
+    return load_model(model_path)
 
 # ==============================================================================
 # 2. FUNGSI GRAD-CAM (XAI)
@@ -80,7 +84,7 @@ def tampilkan_manajemen_pasien():
     # Form Integrasi (Pindai AI + Input Data Pasien)
     with st.expander(t("pat.expander"), expanded=False):
         
-# --- PERMINTAAN DOSEN: TEMPLATE VISUAL & EDUKASI ---
+        # --- PERMINTAAN DOSEN: TEMPLATE VISUAL & EDUKASI ---
         st.info("💡 **Standar Input Medis:** Sistem CAD ini hanya menerima citra MRI Otak (potongan Axial, Coronal, atau Sagittal). Jangan unggah CT-Scan, foto rontgen, atau dokumen.")
         st.write("Harap pastikan gambar yang diunggah menyerupai salah satu format potongan MRI berikut:")
         
@@ -88,13 +92,13 @@ def tampilkan_manajemen_pasien():
         col_spasi_kiri, col_t1, col_t2, col_t3, col_spasi_kanan = st.columns([1, 2, 2, 2, 1])
         
         with col_t1:
-            img_sagittal = Image.open(r"E:\Skripsi_Web_Tumor\assets\sagittal.jpeg").resize((300, 300))
+            img_sagittal = Image.open(os.path.join(BASE_DIR, "assets", "sagittal.jpeg")).resize((300, 300))
             st.image(img_sagittal, caption="Sagittal (Samping)", width="stretch")
         with col_t2:
-            img_axial = Image.open(r"E:\Skripsi_Web_Tumor\assets\axial.jpg").resize((300, 300))
+            img_axial = Image.open(os.path.join(BASE_DIR, "assets", "axial.jpg")).resize((300, 300))
             st.image(img_axial, caption="Axial (Atas)", width="stretch")
         with col_t3:
-            img_coronal = Image.open(r"E:\Skripsi_Web_Tumor\assets\coronal.jpeg").resize((300, 300))
+            img_coronal = Image.open(os.path.join(BASE_DIR, "assets", "coronal.jpeg")).resize((300, 300))
             st.image(img_coronal, caption="Coronal (Depan)", width="stretch")
         st.divider()
         # ----------------------------------------------------
