@@ -13,7 +13,7 @@ supabase>=2.0.0
 groq
 
 # --- Brain tumor model (EfficientNetB2, saved with Keras 3.13.2) ---
-tensorflow>=2.16.1
+tensorflow-cpu==2.15.0
 keras>=3.13.2
 
 # --- Image processing / data ---
