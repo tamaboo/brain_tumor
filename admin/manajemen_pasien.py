@@ -3,12 +3,19 @@ import streamlit as st
 from supabase import create_client, Client
 from datetime import date
 import tensorflow as tf
-from keras.models import load_model, Model
+from tensorflow.keras.models import load_model, Model
 import numpy as np
 import cv2
 from PIL import Image
 import pandas as pd
 from navbar.kamus_bahasa import t
+from admin.validasi_mri import (
+    validasi_file,
+    pesan,
+    aturan_unggah,
+    hasil_tidak_pasti,
+    KEPERCAYAAN_MIN,
+)
 
 # ==============================================================================
 # 1. KONFIGURASI SUPABASE & MODEL AI
@@ -29,7 +36,9 @@ IMG_SIZE = (260, 260)
 @st.cache_resource
 def load_tumor_model():
     model_path = os.path.join(BASE_DIR, "brain_tumor_efficientnetb2.keras")
-    return load_model(model_path)
+    if os.path.exists(model_path):
+        return load_model(model_path)
+    return load_model(r"E:\Skripsi_Web_Tumor\brain_tumor_efficientnetb2.keras")
 
 # ==============================================================================
 # 2. FUNGSI GRAD-CAM (XAI)
@@ -70,113 +79,116 @@ def overlay_heatmap(img, heatmap, alpha=0.4):
     return cv2.addWeighted(img, 1 - alpha, heatmap_color, alpha, 0)
 
 # ==============================================================================
-# 3. ANTARMUKA MANAJEMEN PASIEN TERINTEGRASI MRI
+# 3. ANTARMUKA MANAJEMEN PASIEN TERINTEGRASI MRI & TEMPLATE DOSEN
 # ==============================================================================
 JK_DB = ["Laki-laki", "Perempuan"]
 JK_LABEL = {"Laki-laki": "pat.male", "Perempuan": "pat.female"}
 
+@st.fragment
 def tampilkan_manajemen_pasien():
     st.markdown(f"<h2 style='text-align: center;'>{t('pat.title')}</h2>", unsafe_allow_html=True)
     st.write(t("pat.intro"))
 
     model = load_tumor_model()
 
-    # Form Integrasi (Pindai AI + Input Data Pasien)
-    with st.expander(t("pat.expander"), expanded=False):
-        
-        # --- PERMINTAAN DOSEN: TEMPLATE VISUAL & EDUKASI ---
+    if "diagnosis_ai" not in st.session_state:
+        st.session_state.diagnosis_ai = ""
+    if "akurasi_ai" not in st.session_state:
+        st.session_state.akurasi_ai = 0.0
+
+    with st.expander(t("pat.expander"), expanded=True):
         st.info("💡 **Standar Input Medis:** Sistem CAD ini hanya menerima citra MRI Otak (potongan Axial, Coronal, atau Sagittal). Jangan unggah CT-Scan, foto rontgen, atau dokumen.")
         st.write("Harap pastikan gambar yang diunggah menyerupai salah satu format potongan MRI berikut:")
         
-        # Menggunakan 5 kolom agar gambar terpusat di tengah
-        col_spasi_kiri, col_t1, col_t2, col_t3, col_spasi_kanan = st.columns([1, 2, 2, 2, 1])
-        
-        with col_t1:
-            img_sagittal = Image.open(os.path.join(BASE_DIR, "assets", "sagittal.jpeg")).resize((300, 300))
-            st.image(img_sagittal, caption="Sagittal (Samping)", width="stretch")
-        with col_t2:
-            img_axial = Image.open(os.path.join(BASE_DIR, "assets", "axial.jpg")).resize((300, 300))
-            st.image(img_axial, caption="Axial (Atas)", width="stretch")
-        with col_t3:
-            img_coronal = Image.open(os.path.join(BASE_DIR, "assets", "coronal.jpeg")).resize((300, 300))
-            st.image(img_coronal, caption="Coronal (Depan)", width="stretch")
-        st.divider()
-        # ----------------------------------------------------
-        
-        uploaded_file = st.file_uploader(t("pat.upload"), type=["jpg", "png", "jpeg"], key="mri_upload")
+        try:
+            col_t1, col_t2, col_t3 = st.columns(3)
+            with col_t1:
+                img_sagittal = Image.open(os.path.join(BASE_DIR, "assets", "sagittal.jpeg")).resize((250, 250))
+                st.image(img_sagittal, caption="Sagittal (Samping)")
+            with col_t2:
+                img_axial = Image.open(os.path.join(BASE_DIR, "assets", "axial.jpg")).resize((250, 250))
+                st.image(img_axial, caption="Axial (Atas)")
+            with col_t3:
+                img_coronal = Image.open(os.path.join(BASE_DIR, "assets", "coronal.jpeg")).resize((250, 250))
+                st.image(img_coronal, caption="Coronal (Depan)")
+        except Exception:
+            st.warning("⚠️ Berkas aset template gambar (sagittal, axial, coronal) tidak ditemukan di folder assets/.")
 
-        diagnosis_ai = ""
-        akurasi_ai = 0.0
+        st.divider()
+        st.caption(aturan_unggah())
+
+        uploaded_file = st.file_uploader(t("pat.upload"), type=None, key="mri_upload")
 
         if uploaded_file is not None:
-            try:
-                image = Image.open(uploaded_file).convert("RGB")
+            image, galat, peringatan = validasi_file(uploaded_file)
+
+            if galat is not None:
+                st.error(f"❌ {pesan(galat)}")
+                st.stop()
+
+            for item_peringatan in peringatan:
+                st.warning(f"⚠️ {pesan(item_peringatan)}")
+
+            img_array_original = np.array(image)
+            img_resized = cv2.resize(img_array_original, IMG_SIZE)
+            img_batch = np.expand_dims(img_resized, axis=0)
+
+            with st.spinner(t("pat.spinner")):
+                heatmap, pred_class_idx, probabilities = get_gradcam_heatmap(model, img_batch)
+                overlayed_img = overlay_heatmap(img_resized, heatmap)
+
+                kelas = CLASS_NAMES[pred_class_idx]
+                st.session_state.diagnosis_ai = kelas.capitalize()
+                st.session_state.akurasi_ai = float(probabilities[pred_class_idx] * 100)
+
+            col_img1, col_img2 = st.columns(2)
+            with col_img1:
+                st.image(image, caption=t("pat.cap.orig"), width="stretch")
+            with col_img2:
+                st.image(overlayed_img, caption=t("pat.cap.cam"), width="stretch")
+
+            if hasil_tidak_pasti(st.session_state.akurasi_ai):
+                st.warning(f"⚠️ {pesan(('val.uncertain', {'conf': f'{st.session_state.akurasi_ai:.2f}', 'min': KEPERCAYAAN_MIN}))}")
+                st.error(f"🔒 {pesan(('val.blocked', {}))}")
+                st.stop()
+
+            st.success(t("pat.result", dx=t(f"class.{kelas}"), conf=st.session_state.akurasi_ai))
+
+            # 4. FORMULIR REKAM MEDIS PASIEN
+            st.markdown(t("pat.step2"))
+            with st.form("form_pasien", clear_on_submit=True):
+                col1, col2 = st.columns(2)
+                with col1:
+                    no_rm = st.text_input(t("pat.rm"))
+                    nama = st.text_input(t("pat.name"))
+                with col2:
+                    umur = st.number_input(t("pat.age"), min_value=1, max_value=120, value=30)
+                    jk = st.selectbox(t("pat.gender"), JK_DB, format_func=lambda v: t(JK_LABEL[v]))
+
+                # --- PERBAIKAN: Tombol diubah menjadi "Save" saja ---
+                submit_pasien = st.form_submit_button("Save", type="primary")
                 
-                # --- PERMINTAAN DOSEN: BLOKIR GAMBAR SEMBARANGAN ---
-                width, height = image.size
-                if width < 120 or height < 120:
-                    st.error("❌ Ditolak: Resolusi gambar terlalu kecil atau tidak masuk akal. Harap unggah citra pemindaian MRI yang standar.")
-                    st.stop() # Menghentikan kode AI berjalan agar tidak error
-                # ---------------------------------------------------
-
-                img_array_original = np.array(image)
-                img_resized = cv2.resize(img_array_original, IMG_SIZE)
-                img_batch = np.expand_dims(img_resized, axis=0)
-
-                with st.spinner(t("pat.spinner")):
-                    heatmap, pred_class_idx, probabilities = get_gradcam_heatmap(model, img_batch)
-                    overlayed_img = overlay_heatmap(img_resized, heatmap)
-
-                    kelas = CLASS_NAMES[pred_class_idx]
-                    diagnosis_ai = kelas.capitalize()
-                    akurasi_ai = float(probabilities[pred_class_idx] * 100)
-
-                col_img1, col_img2 = st.columns(2)
-                with col_img1:
-                    st.image(image, caption=t("pat.cap.orig"), width="stretch")
-                with col_img2:
-                    st.image(overlayed_img, caption=t("pat.cap.cam"), width="stretch")
-
-                st.success(t("pat.result", dx=t(f"class.{kelas}"), conf=akurasi_ai))
-
-                # Form Data Diri (Hanya muncul jika MRI sudah dianalisis dan lolos validasi)
-                st.markdown(t("pat.step2"))
-                with st.form("form_pasien"):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        no_rm = st.text_input(t("pat.rm"))
-                        nama = st.text_input(t("pat.name"))
-                    with col2:
-                        umur = st.number_input(t("pat.age"), min_value=1, max_value=120, value=30)
-                        jk = st.selectbox(t("pat.gender"), JK_DB, format_func=lambda v: t(JK_LABEL[v]))
-
-                    submit = st.form_submit_button(t("pat.save"), type="primary")
-                    if submit:
-                        if no_rm and nama:
-                            try:
-                                supabase.table("patients").insert({
-                                    "no_rekam_medis": no_rm,
-                                    "nama_lengkap": nama,
-                                    "usia": umur,
-                                    "jenis_kelamin": jk,
-                                    "diagnosis_tumor": diagnosis_ai,
-                                    "kepercayaan_ai": akurasi_ai,
-                                    "tanggal_scan": str(date.today()),
-                                    "scanned_by": st.session_state.get("current_user", "")
-                                }).execute()
-                                st.success(t("pat.ok", nama=nama))
-                                st.rerun()
-                            except Exception as e:
-                                st.error(t("pat.fail", e=e))
-                        else:
-                            st.warning(t("pat.warn"))
-
-            except Exception as e:
-                # Menangkap jika dokter iseng mengubah nama file PDF menjadi .jpg
-                st.error("❌ Format berkas rusak atau tidak dikenali sebagai citra medis. Sistem hanya menerima matriks citra yang valid.")
+                if submit_pasien:
+                    if no_rm and nama:
+                        try:
+                            supabase.table("patients").insert({
+                                "no_rekam_medis": no_rm,
+                                "nama_lengkap": nama,
+                                "usia": umur,
+                                "jenis_kelamin": jk,
+                                "diagnosis_tumor": st.session_state.diagnosis_ai,
+                                "kepercayaan_ai": st.session_state.akurasi_ai,
+                                "tanggal_scan": str(date.today()),
+                                "scanned_by": st.session_state.get("current_user", "")
+                            }).execute()
+                            st.success(t("pat.ok", nama=nama))
+                        except Exception as e:
+                            st.error(t("pat.fail", e=e))
+                    else:
+                        st.warning(t("pat.warn"))
 
     # ==============================================================================
-    # 4. LIVE DATABASE EDITOR (CRUD)
+    # 5. LIVE DATABASE EDITOR
     # ==============================================================================
     st.divider()
     st.markdown(t("pat.db.title"))
@@ -191,7 +203,7 @@ def tampilkan_manajemen_pasien():
             edited_df = st.data_editor(
                 df,
                 num_rows="dynamic",
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 key="editor_db"
             )
@@ -214,8 +226,6 @@ def tampilkan_manajemen_pasien():
                         supabase.table("patients").insert(baris_baru).execute()
 
                 st.success(t("pat.chgok"))
-                st.rerun()
-
         else:
             st.info(t("pat.empty"))
     except Exception as e:
